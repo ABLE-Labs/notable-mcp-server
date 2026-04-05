@@ -1,0 +1,113 @@
+"""Safety guardrails for NOTABLE MCP tools.
+
+Validates parameters before any robot command is executed.
+Based on pipette.json specs from the NOTABLE Neon system.
+"""
+
+from __future__ import annotations
+
+import re
+
+# Pipette volume ranges (uL): {code: (min, max)}
+PIPETTE_VOLUME_RANGE: dict[str, tuple[float, float]] = {
+    "1ch_1000ul": (1, 1000),
+    "1ch_200ul": (1, 200),
+    "1ch_20ul": (0.5, 20),
+    "8ch_1000ul": (1, 1000),
+    "8ch_200ul": (1, 200),
+    "8ch_20ul": (0.5, 20),
+}
+
+# Deck slot count (4 rows x 3 columns)
+DECK_MIN = 1
+DECK_MAX = 12
+
+# Well pattern: A1-H12
+_WELL_PATTERN = re.compile(r"^[A-H](1[0-2]|[1-9])$")
+
+# Max tips in a 96-well tip rack
+MAX_TIPS = 96
+
+
+class SafetyError(Exception):
+    """Raised when a safety check fails."""
+
+
+def validate_well(well: str) -> None:
+    if not _WELL_PATTERN.match(well):
+        raise SafetyError(
+            f"Invalid well '{well}'. Must be A1-H12 (row A-H, column 1-12)."
+        )
+
+
+def validate_deck_number(deck_number: int) -> None:
+    if not (DECK_MIN <= deck_number <= DECK_MAX):
+        raise SafetyError(
+            f"Deck number {deck_number} out of range. Must be {DECK_MIN}-{DECK_MAX}."
+        )
+
+
+def validate_volume(volume: float, pipette_code: str | None = None) -> None:
+    if volume <= 0:
+        raise SafetyError(f"Volume must be positive, got {volume}.")
+
+    if pipette_code and pipette_code in PIPETTE_VOLUME_RANGE:
+        lo, hi = PIPETTE_VOLUME_RANGE[pipette_code]
+        if not (lo <= volume <= hi):
+            raise SafetyError(
+                f"Volume {volume}uL out of range for {pipette_code} "
+                f"(valid: {lo}-{hi}uL)."
+            )
+
+
+def validate_pipette_number(pipette_number: int) -> None:
+    if pipette_number not in (1, 2):
+        raise SafetyError(
+            f"Pipette number must be 1 (left) or 2 (right), got {pipette_number}."
+        )
+
+
+def validate_rpm(rpm: int) -> None:
+    if not (100 <= rpm <= 3000):
+        raise SafetyError(f"Shaker RPM {rpm} out of range (100-3000).")
+
+
+def validate_pipette_code(code: str) -> None:
+    if code not in PIPETTE_VOLUME_RANGE:
+        raise SafetyError(
+            f"Unknown pipette code '{code}'. "
+            f"Valid: {list(PIPETTE_VOLUME_RANGE.keys())}"
+        )
+
+
+def validate_transfer_params(
+    source_deck: int,
+    source_well: str,
+    dest_deck: int,
+    dest_well: str,
+    volume: float,
+    pipette_number: int,
+    pipette_code: str | None = None,
+) -> None:
+    """Validate all parameters for a transfer_liquid call."""
+    validate_pipette_number(pipette_number)
+    validate_deck_number(source_deck)
+    validate_deck_number(dest_deck)
+    validate_well(source_well)
+    validate_well(dest_well)
+    validate_volume(volume, pipette_code)
+
+
+def validate_tip_sequence_length(start_well: str, count: int) -> None:
+    """Ensure tip sequence does not exceed 96-well rack capacity."""
+    rows = "ABCDEFGH"
+    start_row = rows.index(start_well[0])
+    start_col = int(start_well[1:]) - 1
+    start_index = start_row * 12 + start_col
+    if start_index + count > MAX_TIPS:
+        available = MAX_TIPS - start_index
+        raise SafetyError(
+            f"Not enough tips: need {count} starting from {start_well}, "
+            f"but only {available} positions remain in the rack. "
+            "Use a new tip rack or start from an earlier position."
+        )
