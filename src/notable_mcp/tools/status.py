@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import logging
 
+from ..client import RobotClient
 from ..state import ServerState
 
 logger = logging.getLogger("notable_mcp")
 
 
-async def get_robot_status(client, state: ServerState) -> str:
+async def get_robot_status(client: RobotClient, state: ServerState) -> str:
     """Get current robot and module status."""
     robot_status = await client.get_robot_status()
 
@@ -42,7 +43,7 @@ async def get_robot_status(client, state: ServerState) -> str:
     return json.dumps(result, indent=2, ensure_ascii=False, default=str)
 
 
-async def get_available_resources(client, state: ServerState) -> str:
+async def get_available_resources(client: RobotClient, state: ServerState) -> str:
     """Get all available pipettes, labware, modules, and adapters.
 
     Also caches labware codes for configure_deck validation.

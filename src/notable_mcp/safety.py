@@ -32,6 +32,14 @@ MAX_TIPS = 96
 MAX_MIX_CYCLES = 100
 MAX_SHAKE_DURATION_SEC = 3600  # 1 hour
 
+# Flow rate limits (uL/s) — conservative bounds across all pipette types
+MIN_FLOW_RATE = 0.5
+MAX_FLOW_RATE = 3000.0
+
+# Acceleration time limits (seconds)
+MIN_ACCEL_SEC = 1
+MAX_ACCEL_SEC = 30
+
 
 class SafetyError(Exception):
     """Raised when a safety check fails."""
@@ -100,6 +108,23 @@ def validate_transfer_params(
     validate_well(source_well)
     validate_well(dest_well)
     validate_volume(volume, pipette_code)
+
+
+def validate_flow_rate(rate: float | bool) -> None:
+    """Validate flow rate. True/False are accepted (API handles defaults)."""
+    if isinstance(rate, bool):
+        return
+    if not (MIN_FLOW_RATE <= rate <= MAX_FLOW_RATE):
+        raise SafetyError(
+            f"Flow rate {rate} uL/s out of range ({MIN_FLOW_RATE}-{MAX_FLOW_RATE})."
+        )
+
+
+def validate_accel_sec(accel_sec: int) -> None:
+    if not (MIN_ACCEL_SEC <= accel_sec <= MAX_ACCEL_SEC):
+        raise SafetyError(
+            f"Acceleration time {accel_sec}s out of range ({MIN_ACCEL_SEC}-{MAX_ACCEL_SEC}s)."
+        )
 
 
 def validate_tip_sequence_length(start_well: str, count: int) -> None:

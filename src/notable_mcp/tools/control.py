@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import logging
 
+from ..client import RobotClient
 from ..state import ServerState
 
 logger = logging.getLogger("notable_mcp")
 
 
 async def initialize_robot(
-    client,
+    client: RobotClient,
     state: ServerState,
     home_axes: bool = True,
     move_to_ready: bool = True,
@@ -62,7 +63,7 @@ async def initialize_robot(
     return json.dumps(results, indent=2, ensure_ascii=False)
 
 
-async def emergency_stop(client, state: ServerState) -> str:
+async def emergency_stop(client: RobotClient, state: ServerState) -> str:
     """Emergency stop the robot immediately.
 
     Stops all motion, clears command queue. Robot must be
@@ -78,14 +79,14 @@ async def emergency_stop(client, state: ServerState) -> str:
     )
 
 
-async def pause_robot(client, state: ServerState) -> str:
+async def pause_robot(client: RobotClient, state: ServerState) -> str:
     """Pause the robot. Resume with resume_robot."""
     logger.info("Robot paused")
     result = await client.pause()
     return json.dumps({"status": "paused", "result": result}, indent=2, ensure_ascii=False)
 
 
-async def resume_robot(client, state: ServerState) -> str:
+async def resume_robot(client: RobotClient, state: ServerState) -> str:
     """Resume the robot after a pause."""
     logger.info("Robot resumed")
     result = await client.resume()

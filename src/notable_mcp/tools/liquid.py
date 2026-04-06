@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import logging
 
+from ..client import RobotClient
 from ..safety import (
-    MAX_MIX_CYCLES, SafetyError, validate_transfer_params, validate_well,
-    validate_volume, validate_deck_number,
+    MAX_MIX_CYCLES, SafetyError, validate_flow_rate, validate_transfer_params,
+    validate_well, validate_volume, validate_deck_number,
 )
 from ..state import ServerState
 
@@ -15,7 +16,7 @@ logger = logging.getLogger("notable_mcp")
 
 
 async def _do_single_transfer(
-    client,
+    client: RobotClient,
     state: ServerState,
     pipette_number: int,
     tip_deck: int,
@@ -122,7 +123,7 @@ def _validate_action_context(
 
 
 async def transfer_liquid(
-    client,
+    client: RobotClient,
     state: ServerState,
     source_deck: int,
     source_well: str,
@@ -151,6 +152,8 @@ async def transfer_liquid(
         volume=volume, pipette_number=pipette_number,
         pipette_code=pipette_code,
     )
+    validate_flow_rate(aspirate_flow_rate)
+    validate_flow_rate(dispense_flow_rate)
 
     # Auto-advance tip if already used
     actual_tip = tip_well
@@ -181,7 +184,7 @@ async def transfer_liquid(
 
 
 async def distribute_liquid(
-    client,
+    client: RobotClient,
     state: ServerState,
     source_deck: int,
     source_well: str,
@@ -249,7 +252,7 @@ async def distribute_liquid(
 
 
 async def mix_liquid(
-    client,
+    client: RobotClient,
     state: ServerState,
     deck_number: int,
     well: str,
@@ -275,6 +278,7 @@ async def mix_liquid(
     )
     validate_deck_number(deck_number)
     validate_volume(volume, pipette_code)
+    validate_flow_rate(flow_rate)
 
     # Auto-advance tip
     actual_tip = tip_well

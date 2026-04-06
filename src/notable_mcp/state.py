@@ -134,7 +134,7 @@ class ProtocolStore:
     MAX_NAME_LENGTH = 128
     MAX_HISTORY_PER_PROTOCOL = 50
 
-    # HMAC key for file integrity verification (detects tampering/corruption)
+    # HMAC key for file integrity verification (detects accidental corruption)
     _INTEGRITY_KEY = b"notable-mcp-protocol-integrity-v1"
 
     def __init__(self, storage_dir: Path | None = None):
@@ -186,7 +186,7 @@ class ProtocolStore:
                 elif not self._verify_checksum(data):
                     logger.warning(
                         f"Protocol '{data['name']}' failed integrity check "
-                        f"({path.name}) — skipped. File may have been tampered with."
+                        f"({path.name}) — skipped. File may be corrupted or manually edited."
                     )
                     continue
                 self._protocols[data["name"]] = data
@@ -219,7 +219,7 @@ class ProtocolStore:
         path.unlink(missing_ok=True)
 
     @staticmethod
-    def _sanitize_log_str(s: str, max_len: int = 80) -> str:
+    def sanitize_log_str(s: str, max_len: int = 80) -> str:
         """Strip control characters and truncate for safe log inclusion."""
         clean = re.sub(r'[\x00-\x1f\x7f]', '', s)
         return clean[:max_len] + ("..." if len(clean) > max_len else "")

@@ -26,7 +26,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from .client import NotableAPIError, NotableClient
+from .client import NotableAPIError, NotableClient, RobotClient
 from .safety import SafetyError
 from .simulator import SimulatedClient
 from .state import ServerState
@@ -523,7 +523,8 @@ TOOLS = [
             "Get the execution history for a saved protocol. "
             "Shows recent run results: status (ok/error), completed steps, duration, "
             "dry_run flag, and timestamps. "
-            "Useful for checking whether a protocol has been successfully run recently."
+            "Useful for checking whether a protocol has been successfully run recently. "
+            "Note: history is in-memory only and is lost on server restart."
         ),
         inputSchema={
             "type": "object",
@@ -545,7 +546,7 @@ TOOLS = [
 # Server setup
 # ---------------------------------------------------------------------------
 
-def create_server(client, state: ServerState) -> Server:
+def create_server(client: RobotClient, state: ServerState) -> Server:
     """Create and configure the MCP server with all tools registered."""
     server = Server("notable-mcp", instructions=SERVER_INSTRUCTIONS)
 
@@ -576,7 +577,7 @@ def create_server(client, state: ServerState) -> Server:
     return server
 
 
-async def _dispatch(client, state: ServerState, name: str, args: dict) -> str:
+async def _dispatch(client: RobotClient, state: ServerState, name: str, args: dict) -> str:
     """Route tool calls to their handler functions."""
     match name:
         # Status
@@ -650,20 +651,20 @@ async def _reset_tip_tracking(state: ServerState, deck_number: int) -> str:
     )
 
 
-async def _run_protocol(client, state: ServerState, name: str, dry_run: bool = False) -> str:
+async def _run_protocol(client: RobotClient, state: ServerState, name: str, dry_run: bool = False) -> str:
     """Execute a saved protocol step by step. Stops on first error.
 
     When dry_run=True, execution uses an isolated SimulatedClient + fresh
     ServerState so the real robot is never touched.
     """
-    _log_name = state.protocols._sanitize_log_str(name)
+    _log_name = state.protocols.sanitize_log_str(name)
     proto = state.protocols.get(name)
     if not proto:
         raise ValueError(f"Protocol '{_log_name}' not found.")
 
     # Re-validate steps at run time (defense in depth: protocol file
     # may have been manually edited after save)
-    protocol._validate_steps(proto["steps"])
+    protocol.validate_steps(proto["steps"])
 
     start_time = time.monotonic()
 

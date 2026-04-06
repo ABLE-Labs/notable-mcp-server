@@ -5,14 +5,15 @@ from __future__ import annotations
 import json
 import logging
 
-from ..safety import MAX_SHAKE_DURATION_SEC, SafetyError, validate_rpm
+from ..client import RobotClient
+from ..safety import MAX_SHAKE_DURATION_SEC, SafetyError, validate_accel_sec, validate_rpm
 from ..state import ServerState
 
 logger = logging.getLogger("notable_mcp")
 
 
 async def run_thermocycler(
-    client,
+    client: RobotClient,
     state: ServerState,
     method_name: str,
 ) -> str:
@@ -43,7 +44,7 @@ async def run_thermocycler(
 
 
 async def shake_plate(
-    client,
+    client: RobotClient,
     state: ServerState,
     rpm: int,
     duration_sec: float,
@@ -56,6 +57,7 @@ async def shake_plate(
         raise SafetyError(f"duration_sec must be positive, got {duration_sec}.")
     if duration_sec > MAX_SHAKE_DURATION_SEC:
         raise SafetyError(f"duration_sec {duration_sec} exceeds maximum ({MAX_SHAKE_DURATION_SEC}s).")
+    validate_accel_sec(accel_sec)
 
     logger.info(f"shake_plate: {rpm} RPM, {duration_sec}s")
 
@@ -72,7 +74,7 @@ async def shake_plate(
     )
 
 
-async def control_odtc_door(client, state: ServerState, open: bool) -> str:
+async def control_odtc_door(client: RobotClient, state: ServerState, open: bool) -> str:
     """Open or close the ODTC door."""
     state.require_initialized()
 

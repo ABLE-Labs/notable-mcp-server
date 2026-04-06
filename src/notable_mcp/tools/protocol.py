@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 
+from ..client import RobotClient
 from ..safety import SafetyError
 from ..state import ServerState
 
@@ -24,27 +25,27 @@ PROTOCOL_ALLOWED_TOOLS = frozenset({
 })
 
 
-def _validate_steps(steps: list[dict]) -> None:
+def validate_steps(steps: list[dict]) -> None:
     """Validate protocol step format."""
     if not steps:
-        raise SafetyError("프로토콜에 최소 1개 이상의 step이 필요합니다.")
+        raise SafetyError("Protocol must have at least one step.")
 
     for i, step in enumerate(steps, 1):
         if not isinstance(step, dict):
-            raise SafetyError(f"Step {i}: dict 형식이어야 합니다.")
+            raise SafetyError(f"Step {i}: must be a dict.")
         if "tool" not in step:
-            raise SafetyError(f"Step {i}: 'tool' 필드가 없습니다.")
+            raise SafetyError(f"Step {i}: missing 'tool' field.")
         if step["tool"] not in PROTOCOL_ALLOWED_TOOLS:
             raise SafetyError(
-                f"Step {i}: '{step['tool']}'은 프로토콜에 사용할 수 없는 도구입니다. "
-                f"허용: {sorted(PROTOCOL_ALLOWED_TOOLS)}"
+                f"Step {i}: '{step['tool']}' is not allowed in protocols. "
+                f"Allowed: {sorted(PROTOCOL_ALLOWED_TOOLS)}"
             )
         if "arguments" not in step or not isinstance(step.get("arguments"), dict):
-            raise SafetyError(f"Step {i}: 'arguments' dict 필드가 필요합니다.")
+            raise SafetyError(f"Step {i}: 'arguments' dict field is required.")
 
 
 async def save_protocol(
-    client,
+    client: RobotClient,
     state: ServerState,
     name: str,
     description: str,
@@ -57,7 +58,7 @@ async def save_protocol(
     setup: explicit HW config (pipette_config, deck_config, modules).
     capture_setup: if true, snapshot current state as setup (overrides setup arg).
     """
-    _validate_steps(steps)
+    validate_steps(steps)
 
     if capture_setup:
         setup = state.get_current_setup()
@@ -69,7 +70,7 @@ async def save_protocol(
     return json.dumps({"status": "ok", "protocol": summary}, indent=2, ensure_ascii=False)
 
 
-async def list_protocols(client, state: ServerState) -> str:
+async def list_protocols(client: RobotClient, state: ServerState) -> str:
     """List all saved protocols."""
     protocols = state.protocols.list_all()
     return json.dumps(
@@ -79,17 +80,17 @@ async def list_protocols(client, state: ServerState) -> str:
     )
 
 
-async def get_protocol(client, state: ServerState, name: str) -> str:
+async def get_protocol(client: RobotClient, state: ServerState, name: str) -> str:
     """Get details of a saved protocol including all steps."""
     protocol = state.protocols.get(name)
     if not protocol:
-        raise SafetyError(f"프로토콜 '{name}'을 찾을 수 없습니다.")
+        raise SafetyError(f"Protocol '{name}' not found.")
     return json.dumps(protocol, indent=2, ensure_ascii=False)
 
 
-async def delete_protocol(client, state: ServerState, name: str) -> str:
+async def delete_protocol(client: RobotClient, state: ServerState, name: str) -> str:
     """Delete a saved protocol."""
     if not state.protocols.delete(name):
-        raise SafetyError(f"프로토콜 '{name}'을 찾을 수 없습니다.")
+        raise SafetyError(f"Protocol '{name}' not found.")
     logger.info(f"Protocol deleted: '{name}'")
     return json.dumps({"status": "ok", "deleted": name}, indent=2, ensure_ascii=False)

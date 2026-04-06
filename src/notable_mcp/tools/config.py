@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import logging
 
+from ..client import RobotClient
 from ..safety import SafetyError, validate_deck_number, validate_pipette_code
 from ..state import ServerState
 
 logger = logging.getLogger("notable_mcp")
 
 
-async def configure_pipette(client, state: ServerState, pipette_config: dict[str, str]) -> str:
+async def configure_pipette(client: RobotClient, state: ServerState, pipette_config: dict[str, str]) -> str:
     """Configure which pipettes are mounted on the robot."""
     for slot, code in pipette_config.items():
         if slot not in ("1", "2"):
@@ -24,7 +25,7 @@ async def configure_pipette(client, state: ServerState, pipette_config: dict[str
     return json.dumps({"status": "ok", "pipette_config": result}, indent=2, ensure_ascii=False)
 
 
-async def configure_deck(client, state: ServerState, deck_config: dict[str, str | dict]) -> str:
+async def configure_deck(client: RobotClient, state: ServerState, deck_config: dict[str, str | dict]) -> str:
     """Configure the deck layout."""
     for slot_str, value in deck_config.items():
         try:
