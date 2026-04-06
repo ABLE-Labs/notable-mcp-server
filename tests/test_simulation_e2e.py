@@ -14,7 +14,7 @@ import tempfile
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-EXPECTED_TOOL_COUNT = 22
+EXPECTED_TOOL_COUNT = 23
 
 
 async def call(session: ClientSession, tool_name: str, args: dict = None) -> dict:
@@ -438,12 +438,47 @@ async def main():
             assert "not initialized" in result["error"].lower()
             print(f"    Blocked: {result['error'][:60]}...")
 
+            # --- Dry run ---
+
+            # 41. dry_run=True: validates steps without touching real robot
+            print("\n[41] Dry run: validate full_protocol against simulator...")
+            # full_protocol has a stored setup, so dry_run is fully self-contained
+            result = await call(session, "run_protocol", {
+                "name": "full_protocol",
+                "dry_run": True,
+            })
+            assert result["status"] == "ok"
+            assert result["dry_run"] is True
+            assert result["completed_steps"] == 1
+            assert "message" in result
+            # Real state must not have changed (still uninitialized after e-stop)
+            st = await call(session, "get_robot_status")
+            assert st["server_state"]["initialized"] is False
+            print(f"    Dry run OK: {result['completed_steps']} steps, real state unchanged")
+
+            # --- Run history ---
+
+            # 42. get_protocol_run_history: records runs
+            print("\n[42] Protocol run history...")
+            # Re-initialize so we can run for real
+            await call(session, "run_protocol", {"name": "full_protocol"})
+            history = await call(session, "get_protocol_run_history", {"name": "full_protocol"})
+            assert history["count"] >= 2  # dry_run + real run
+            assert any(r["dry_run"] is True for r in history["runs"])
+            assert any(r["dry_run"] is False for r in history["runs"])
+            # limit clamp
+            history_1 = await call(session, "get_protocol_run_history", {
+                "name": "full_protocol", "limit": 1,
+            })
+            assert history_1["count"] == 1
+            print(f"    History entries: {history['count']}, limited to 1: {history_1['count']}")
+
     # Cleanup temp directory
     import shutil
     shutil.rmtree(tmpdir, ignore_errors=True)
 
     print("\n" + "=" * 60)
-    print(f"ALL 40 TESTS PASSED!")
+    print(f"ALL 42 TESTS PASSED!")
     print("=" * 60)
 
 

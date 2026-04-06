@@ -13,6 +13,7 @@ import hmac
 import json as _json
 import logging
 import re
+import uuid
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -131,12 +132,14 @@ class ProtocolStore:
     MAX_PROTOCOLS = 100
     MAX_STEPS_PER_PROTOCOL = 500
     MAX_NAME_LENGTH = 128
+    MAX_HISTORY_PER_PROTOCOL = 50
 
     # HMAC key for file integrity verification (detects tampering/corruption)
     _INTEGRITY_KEY = b"notable-mcp-protocol-integrity-v1"
 
     def __init__(self, storage_dir: Path | None = None):
         self._protocols: dict[str, dict] = {}
+        self._run_history: dict[str, deque[dict]] = {}
         self._storage_dir = storage_dir
         if storage_dir:
             storage_dir.mkdir(parents=True, exist_ok=True)
@@ -273,7 +276,29 @@ class ProtocolStore:
         removed = self._protocols.pop(name, None) is not None
         if removed:
             self._remove_file(name)
+            self._run_history.pop(name, None)
         return removed
+
+    def record_run(self, name: str, entry: dict) -> None:
+        """Append a run result to in-memory history (up to MAX_HISTORY_PER_PROTOCOL)."""
+        full_entry = {
+            "run_id": uuid.uuid4().hex[:8],
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            **entry,
+        }
+        if name not in self._run_history:
+            self._run_history[name] = deque(maxlen=self.MAX_HISTORY_PER_PROTOCOL)
+        self._run_history[name].append(full_entry)
+
+    def get_run_history(self, name: str, limit: int = 10) -> list[dict]:
+        """Return recent run entries for a protocol (most recent last).
+
+        Raises ValueError if the protocol does not exist.
+        """
+        if name not in self._protocols:
+            raise ValueError(f"Protocol '{name}' not found.")
+        limit = max(1, min(limit, self.MAX_HISTORY_PER_PROTOCOL))
+        return list(self._run_history.get(name, deque()))[-limit:]
 
 
 class ServerState:

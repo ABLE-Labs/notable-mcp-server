@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 from mcp.server import Server
@@ -115,7 +116,9 @@ Protocols let you save a sequence of liquid handling steps and re-execute them l
    - If the protocol has **setup**: auto-configures pipette, deck, and initializes the robot.
    - If no setup: robot must already be configured and initialized.
    - **IMPORTANT**: Always confirm with the user that the physical robot state matches before running.
-4. **delete_protocol**: Remove a protocol.
+   - Use **dry_run=true** to validate all steps against the simulator first without touching the real robot.
+4. **get_protocol_run_history**: View recent run results (status, steps completed, duration) for a protocol.
+5. **delete_protocol**: Remove a protocol.
 """
 
 # ---------------------------------------------------------------------------
@@ -483,12 +486,22 @@ TOOLS = [
             "auto-configured and initialized before execution. "
             "If no setup is stored, the robot must already be configured and initialized. "
             "IMPORTANT: Before running, confirm with the user that the physical "
-            "robot state matches the protocol's setup."
+            "robot state matches the protocol's setup. "
+            "Use dry_run=true to validate all steps against the simulator first "
+            "without touching the real robot."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Protocol name to execute."},
+                "dry_run": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, execute against simulator only — validates all steps "
+                        "without touching the real robot. Default: false."
+                    ),
+                    "default": False,
+                },
             },
             "required": ["name"],
         },
@@ -500,6 +513,27 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Protocol name to delete."},
+            },
+            "required": ["name"],
+        },
+    ),
+    Tool(
+        name="get_protocol_run_history",
+        description=(
+            "Get the execution history for a saved protocol. "
+            "Shows recent run results: status (ok/error), completed steps, duration, "
+            "dry_run flag, and timestamps. "
+            "Useful for checking whether a protocol has been successfully run recently."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Protocol name."},
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of recent runs to return (1-50). Default: 10.",
+                    "default": 10,
+                },
             },
             "required": ["name"],
         },
@@ -597,6 +631,8 @@ async def _dispatch(client, state: ServerState, name: str, args: dict) -> str:
             return await protocol.delete_protocol(client, state, **args)
         case "run_protocol":
             return await _run_protocol(client, state, **args)
+        case "get_protocol_run_history":
+            return await _get_protocol_run_history(state, **args)
         case _:
             raise ValueError(f"Unknown tool: {name}")
 
@@ -614,9 +650,13 @@ async def _reset_tip_tracking(state: ServerState, deck_number: int) -> str:
     )
 
 
-async def _run_protocol(client, state: ServerState, name: str) -> str:
-    """Execute a saved protocol step by step. Stops on first error."""
-    _log_name = state.protocols._sanitize_log_str(name)  # safe for log output
+async def _run_protocol(client, state: ServerState, name: str, dry_run: bool = False) -> str:
+    """Execute a saved protocol step by step. Stops on first error.
+
+    When dry_run=True, execution uses an isolated SimulatedClient + fresh
+    ServerState so the real robot is never touched.
+    """
+    _log_name = state.protocols._sanitize_log_str(name)
     proto = state.protocols.get(name)
     if not proto:
         raise ValueError(f"Protocol '{_log_name}' not found.")
@@ -625,27 +665,56 @@ async def _run_protocol(client, state: ServerState, name: str) -> str:
     # may have been manually edited after save)
     protocol._validate_steps(proto["steps"])
 
+    start_time = time.monotonic()
+
+    # dry_run: execute against an isolated SimulatedClient + fresh ServerState
+    dry_warning = None
+    if dry_run:
+        exec_client = SimulatedClient()
+        exec_state = ServerState(protocol_dir=None)
+        if not proto.get("setup"):
+            # No stored setup — bootstrap dry state from current robot config
+            exec_state.update_pipette_config(dict(state.pipette_config))
+            exec_state.update_deck_config(dict(state.deck_config))
+            exec_state.set_initialized()
+            dry_warning = "No setup stored in protocol — dry run used current robot config."
+    else:
+        exec_client = client
+        exec_state = state
+
+    def _record(status: str, completed: int, total: int, phase: str | None, error_step: int | None) -> None:
+        state.protocols.record_run(name, {
+            "status": status,
+            "dry_run": dry_run,
+            "completed_steps": completed,
+            "total_steps": total,
+            "phase": phase,
+            "error_step": error_step,
+            "duration_sec": round(time.monotonic() - start_time, 2),
+        })
+
     setup = proto.get("setup")
     if setup:
-        # Auto-configure from stored setup — wrap so errors are structured
         try:
-            logger.info(f"Protocol '{_log_name}': applying saved setup")
+            logger.info(f"Protocol '{_log_name}': applying {'dry run ' if dry_run else ''}setup")
             if "pipette_config" in setup:
-                await _dispatch(client, state, "configure_pipette",
+                await _dispatch(exec_client, exec_state, "configure_pipette",
                                 {"pipette_config": setup["pipette_config"]})
             if "deck_config" in setup:
-                await _dispatch(client, state, "configure_deck",
+                await _dispatch(exec_client, exec_state, "configure_deck",
                                 {"deck_config": setup["deck_config"]})
             init_args: dict = {"home_axes": True, "move_to_ready": True}
             if "modules" in setup:
                 init_args["modules"] = setup["modules"]
-            await _dispatch(client, state, "initialize_robot", init_args)
+            await _dispatch(exec_client, exec_state, "initialize_robot", init_args)
         except Exception as e:
             logger.error(f"Protocol '{_log_name}' setup failed: {e}", exc_info=True)
+            _record("error", 0, len(proto["steps"]), "setup", None)
             return json.dumps(
                 {
                     "status": "error",
                     "protocol": name,
+                    "dry_run": dry_run,
                     "phase": "setup",
                     "setup_error": "Setup failed. Check get_error_log for details.",
                     "completed_steps": 0,
@@ -655,7 +724,7 @@ async def _run_protocol(client, state: ServerState, name: str) -> str:
                 ensure_ascii=False,
             )
     else:
-        state.require_initialized()
+        exec_state.require_initialized()
 
     steps = proto["steps"]
     results = []
@@ -664,7 +733,7 @@ async def _run_protocol(client, state: ServerState, name: str) -> str:
         tool_name = step["tool"]
         tool_args = step["arguments"]
         try:
-            result_str = await _dispatch(client, state, tool_name, tool_args)
+            result_str = await _dispatch(exec_client, exec_state, tool_name, tool_args)
             results.append({
                 "step": i,
                 "tool": tool_name,
@@ -679,11 +748,12 @@ async def _run_protocol(client, state: ServerState, name: str) -> str:
                 "status": "error",
                 "error": f"Step {i} ({tool_name}) failed. Check get_error_log for details.",
             })
-            # Stop on first error
+            _record("error", i - 1, len(steps), "execution", i)
             return json.dumps(
                 {
                     "status": "error",
                     "protocol": name,
+                    "dry_run": dry_run,
                     "phase": "execution",
                     "completed_steps": i - 1,
                     "total_steps": len(steps),
@@ -693,17 +763,30 @@ async def _run_protocol(client, state: ServerState, name: str) -> str:
                 ensure_ascii=False,
             )
 
-    logger.info(f"Protocol '{_log_name}' completed successfully ({len(steps)} steps)")
+    logger.info(f"Protocol '{_log_name}' {'dry run ' if dry_run else ''}completed ({len(steps)} steps)")
+    _record("ok", len(steps), len(steps), None, None)
+
+    response: dict = {
+        "status": "ok",
+        "protocol": name,
+        "dry_run": dry_run,
+        "completed_steps": len(steps),
+        "total_steps": len(steps),
+        "results": results,
+    }
+    if dry_run:
+        response["message"] = "Dry run succeeded. All steps validated against simulator."
+    if dry_warning:
+        response["warning"] = dry_warning
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+async def _get_protocol_run_history(state: ServerState, name: str, limit: int = 10) -> str:
+    """Return recent run history for a protocol."""
+    runs = state.protocols.get_run_history(name, limit)
     return json.dumps(
-        {
-            "status": "ok",
-            "protocol": name,
-            "completed_steps": len(steps),
-            "total_steps": len(steps),
-            "results": results,
-        },
-        indent=2,
-        ensure_ascii=False,
+        {"protocol": name, "runs": runs, "count": len(runs)},
+        indent=2, ensure_ascii=False,
     )
 
 
