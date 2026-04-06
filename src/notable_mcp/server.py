@@ -616,9 +616,10 @@ async def _reset_tip_tracking(state: ServerState, deck_number: int) -> str:
 
 async def _run_protocol(client, state: ServerState, name: str) -> str:
     """Execute a saved protocol step by step. Stops on first error."""
+    _log_name = state.protocols._sanitize_log_str(name)  # safe for log output
     proto = state.protocols.get(name)
     if not proto:
-        raise ValueError(f"Protocol '{name}' not found.")
+        raise ValueError(f"Protocol '{_log_name}' not found.")
 
     # Re-validate steps at run time (defense in depth: protocol file
     # may have been manually edited after save)
@@ -628,7 +629,7 @@ async def _run_protocol(client, state: ServerState, name: str) -> str:
     if setup:
         # Auto-configure from stored setup — wrap so errors are structured
         try:
-            logger.info(f"Protocol '{name}': applying saved setup")
+            logger.info(f"Protocol '{_log_name}': applying saved setup")
             if "pipette_config" in setup:
                 await _dispatch(client, state, "configure_pipette",
                                 {"pipette_config": setup["pipette_config"]})
@@ -640,13 +641,13 @@ async def _run_protocol(client, state: ServerState, name: str) -> str:
                 init_args["modules"] = setup["modules"]
             await _dispatch(client, state, "initialize_robot", init_args)
         except Exception as e:
-            logger.error(f"Protocol '{name}' setup failed: {e}")
+            logger.error(f"Protocol '{_log_name}' setup failed: {e}", exc_info=True)
             return json.dumps(
                 {
                     "status": "error",
                     "protocol": name,
                     "phase": "setup",
-                    "setup_error": f"{type(e).__name__}: {e}",
+                    "setup_error": "Setup failed. Check get_error_log for details.",
                     "completed_steps": 0,
                     "total_steps": len(proto["steps"]),
                 },
@@ -671,12 +672,12 @@ async def _run_protocol(client, state: ServerState, name: str) -> str:
                 "result": json.loads(result_str),
             })
         except Exception as e:
-            logger.error(f"Protocol '{name}' failed at step {i} ({tool_name}): {e}")
+            logger.error(f"Protocol '{_log_name}' failed at step {i} ({tool_name}): {e}", exc_info=True)
             results.append({
                 "step": i,
                 "tool": tool_name,
                 "status": "error",
-                "error": f"{type(e).__name__}: {e}",
+                "error": f"Step {i} ({tool_name}) failed. Check get_error_log for details.",
             })
             # Stop on first error
             return json.dumps(
@@ -692,7 +693,7 @@ async def _run_protocol(client, state: ServerState, name: str) -> str:
                 ensure_ascii=False,
             )
 
-    logger.info(f"Protocol '{name}' completed successfully ({len(steps)} steps)")
+    logger.info(f"Protocol '{_log_name}' completed successfully ({len(steps)} steps)")
     return json.dumps(
         {
             "status": "ok",
@@ -743,6 +744,11 @@ def main():
         scheme = "https" if args.tls else "http"
         base_url = f"{scheme}://{args.host}:{args.port}"
         api_key = args.api_key or os.environ.get("NOTABLE_API_KEY")
+        if args.api_key:
+            logger.warning(
+                "API key passed via --api-key flag (visible in process list). "
+                "Prefer NOTABLE_API_KEY environment variable for security."
+            )
         client = NotableClient(base_url=base_url, api_key=api_key)
         logger.info(f"Connecting to {base_url}{' (TLS)' if args.tls else ''}{' (authenticated)' if api_key else ''}")
 

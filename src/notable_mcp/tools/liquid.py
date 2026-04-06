@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import logging
 
-from ..safety import SafetyError, validate_transfer_params, validate_well
-from ..safety import validate_volume, validate_deck_number
+from ..safety import (
+    MAX_MIX_CYCLES, SafetyError, validate_transfer_params, validate_well,
+    validate_volume, validate_deck_number,
+)
 from ..state import ServerState
 
 logger = logging.getLogger("notable_mcp")
@@ -263,6 +265,8 @@ async def mix_liquid(
         raise SafetyError("tip_deck is required.")
     if cycles < 1:
         raise SafetyError(f"cycles must be at least 1, got {cycles}.")
+    if cycles > MAX_MIX_CYCLES:
+        raise SafetyError(f"cycles {cycles} exceeds maximum ({MAX_MIX_CYCLES}).")
 
     validate_well(tip_well)
     validate_well(well)

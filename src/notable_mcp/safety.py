@@ -28,6 +28,10 @@ _WELL_PATTERN = re.compile(r"^[A-H](1[0-2]|[1-9])$")
 # Max tips in a 96-well tip rack
 MAX_TIPS = 96
 
+# Operational limits to prevent robot DoS
+MAX_MIX_CYCLES = 100
+MAX_SHAKE_DURATION_SEC = 3600  # 1 hour
+
 
 class SafetyError(Exception):
     """Raised when a safety check fails."""

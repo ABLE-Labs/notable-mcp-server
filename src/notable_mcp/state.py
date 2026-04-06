@@ -130,6 +130,7 @@ class ProtocolStore:
     # Storage limits
     MAX_PROTOCOLS = 100
     MAX_STEPS_PER_PROTOCOL = 500
+    MAX_NAME_LENGTH = 128
 
     # HMAC key for file integrity verification (detects tampering/corruption)
     _INTEGRITY_KEY = b"notable-mcp-protocol-integrity-v1"
@@ -174,13 +175,21 @@ class ProtocolStore:
                 data = _json.loads(path.read_text(encoding="utf-8"))
                 if "name" not in data or "steps" not in data:
                     continue
-                if not self._verify_checksum(data):
+                if "_checksum" not in data:
+                    logger.warning(
+                        f"Protocol '{data['name']}' ({path.name}) has no integrity "
+                        "checksum — re-saving to add one."
+                    )
+                elif not self._verify_checksum(data):
                     logger.warning(
                         f"Protocol '{data['name']}' failed integrity check "
                         f"({path.name}) — skipped. File may have been tampered with."
                     )
                     continue
                 self._protocols[data["name"]] = data
+                # Re-persist legacy files to add checksum
+                if "_checksum" not in data:
+                    self._persist(data["name"])
                 count += 1
             except Exception as e:
                 logger.warning(f"Failed to load protocol from {path.name}: {e}")
@@ -206,10 +215,22 @@ class ProtocolStore:
         path = self._protocol_path(name)
         path.unlink(missing_ok=True)
 
+    @staticmethod
+    def _sanitize_log_str(s: str, max_len: int = 80) -> str:
+        """Strip control characters and truncate for safe log inclusion."""
+        clean = re.sub(r'[\x00-\x1f\x7f]', '', s)
+        return clean[:max_len] + ("..." if len(clean) > max_len else "")
+
     def save(
         self, name: str, description: str, steps: list[dict],
         setup: dict | None = None,
     ) -> dict:
+        if not name or not name.strip():
+            raise SafetyError("Protocol name must not be empty.")
+        if len(name) > self.MAX_NAME_LENGTH:
+            raise SafetyError(
+                f"Protocol name too long ({len(name)} chars, max {self.MAX_NAME_LENGTH})."
+            )
         if len(steps) > self.MAX_STEPS_PER_PROTOCOL:
             raise SafetyError(
                 f"Protocol has {len(steps)} steps (max {self.MAX_STEPS_PER_PROTOCOL})."

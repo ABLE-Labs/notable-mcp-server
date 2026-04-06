@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-from ..safety import SafetyError, validate_rpm
+from ..safety import MAX_SHAKE_DURATION_SEC, SafetyError, validate_rpm
 from ..state import ServerState
 
 logger = logging.getLogger("notable_mcp")
@@ -54,6 +54,8 @@ async def shake_plate(
     validate_rpm(rpm)
     if duration_sec <= 0:
         raise SafetyError(f"duration_sec must be positive, got {duration_sec}.")
+    if duration_sec > MAX_SHAKE_DURATION_SEC:
+        raise SafetyError(f"duration_sec {duration_sec} exceeds maximum ({MAX_SHAKE_DURATION_SEC}s).")
 
     logger.info(f"shake_plate: {rpm} RPM, {duration_sec}s")
 
