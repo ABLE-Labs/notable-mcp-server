@@ -56,6 +56,14 @@ claude mcp add notable-mcp -- notable-mcp --simulate
 }
 ```
 
+### Update
+
+```bash
+cd notable-mcp-server
+git pull
+pip install .
+```
+
 ### 3. Talk to your AI
 
 > "Show me available pipettes and labware"
@@ -76,7 +84,7 @@ That's it. The AI discovers the tools automatically.
 Simulation mode responds with realistic data without moving hardware.
 Use it for development, testing, and demos.
 
-## Available Tools (14)
+## Available Tools (23)
 
 ### Status & Config
 
@@ -111,6 +119,30 @@ Use it for development, testing, and demos.
 | `run_thermocycler` | Run ODTC thermocycler method |
 | `shake_plate` | Shake plate on orbital shaker |
 | `control_odtc_door` | Open/close thermocycler door |
+
+### Tip Management
+
+| Tool | Description |
+|------|-------------|
+| `reset_tip_tracking` | Reset tip count for a deck slot (e.g. after replacing a tip rack) |
+
+### Diagnostics
+
+| Tool | Description |
+|------|-------------|
+| `diagnose_error` | Analyze an error message and suggest fixes |
+| `get_error_log` | Retrieve recent error history |
+
+### Protocols
+
+| Tool | Description |
+|------|-------------|
+| `save_protocol` | Save a sequence of steps as a reusable protocol |
+| `list_protocols` | List all saved protocols |
+| `get_protocol` | Get details of a saved protocol |
+| `run_protocol` | Run a saved protocol (supports `dry_run` mode) |
+| `delete_protocol` | Delete a saved protocol |
+| `get_protocol_run_history` | View past run results for a protocol |
 
 ## Example Workflow
 
@@ -152,7 +184,7 @@ Invalid parameters return a clear error message instead of executing.
 
 ```
 src/notable_mcp/
-├── server.py       # MCP server + CLI entry point (14 tools)
+├── server.py       # MCP server + CLI entry point (23 tools)
 ├── client.py       # REST API client (httpx, no SDK needed)
 ├── state.py        # Server state tracking (init, config, lock)
 ├── safety.py       # Parameter validation guardrails
