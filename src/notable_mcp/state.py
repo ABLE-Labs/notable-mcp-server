@@ -25,17 +25,106 @@ from .safety import SafetyError
 logger = logging.getLogger("notable_mcp")
 
 
-class TipTracker:
-    """Tracks tip usage per deck slot across calls."""
+class ConfigPersistence:
+    """Save/load last used pipette+deck config for quick re-setup."""
+
+    def __init__(self, storage_dir: Path):
+        self._path = storage_dir / "last_config.json"
+
+    def save(self, pipette_config: dict, deck_config: dict) -> None:
+        data = {
+            "pipette_config": {k: v for k, v in pipette_config.items() if v},
+            "deck_config": {k: v for k, v in deck_config.items() if v},
+            "saved_at": datetime.now(tz=timezone.utc).isoformat(),
+        }
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(
+            _json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8",
+        )
+
+    def load(self) -> dict | None:
+        if not self._path.exists():
+            return None
+        try:
+            return _json.loads(self._path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+
+class VolumeTracker:
+    """Track liquid volume per well. Warn when aspiration may exceed remaining."""
 
     def __init__(self):
+        self._volumes: dict[tuple[int, str], float] = {}
+        self._tracked: set[tuple[int, str]] = set()
+
+    def record_dispense(self, deck: int, well: str, volume: float) -> None:
+        key = (deck, well)
+        self._tracked.add(key)
+        self._volumes[key] = self._volumes.get(key, 0.0) + volume
+
+    def record_aspirate(self, deck: int, well: str, volume: float) -> str | None:
+        """Record aspiration. Returns warning if volume may be insufficient."""
+        key = (deck, well)
+        if key not in self._tracked:
+            return None
+        current = self._volumes.get(key, 0.0)
+        self._volumes[key] = current - volume
+        if self._volumes[key] < 0:
+            return (
+                f"Volume warning: Deck{deck}:{well} estimated at {current:.1f}uL "
+                f"but aspirating {volume}uL (deficit: {-self._volumes[key]:.1f}uL)"
+            )
+        return None
+
+    def set_volume(self, deck: int, well: str, volume: float) -> None:
+        key = (deck, well)
+        self._tracked.add(key)
+        self._volumes[key] = volume
+
+    def get_volume(self, deck: int, well: str) -> float | None:
+        key = (deck, well)
+        if key not in self._tracked:
+            return None
+        return self._volumes.get(key, 0.0)
+
+    def reset(self) -> None:
+        self._volumes.clear()
+        self._tracked.clear()
+
+
+class TipTracker:
+    """Tracks tip usage per deck slot across calls with optional file persistence."""
+
+    def __init__(self, storage_path: Path | None = None):
         self._used: dict[int, set[str]] = {}
+        self._storage_path = storage_path
+        if storage_path and storage_path.exists():
+            self._load()
+
+    def _save(self) -> None:
+        if not self._storage_path:
+            return
+        data = {str(k): sorted(v) for k, v in self._used.items() if v}
+        self._storage_path.parent.mkdir(parents=True, exist_ok=True)
+        self._storage_path.write_text(
+            _json.dumps(data, indent=2), encoding="utf-8",
+        )
+
+    def _load(self) -> None:
+        try:
+            data = _json.loads(self._storage_path.read_text(encoding="utf-8"))
+            self._used = {int(k): set(v) for k, v in data.items()}
+            logger.info(f"Tip state loaded: {sum(len(v) for v in self._used.values())} used tips")
+        except Exception as e:
+            logger.warning(f"Failed to load tip state: {e}")
 
     def mark_used(self, deck_number: int, well: str) -> None:
         if deck_number not in self._used:
             self._used[deck_number] = set()
         self._used[deck_number].add(well)
         logger.debug(f"Tip used: Deck{deck_number}:{well}")
+        self._save()
 
     def is_used(self, deck_number: int, well: str) -> bool:
         return well in self._used.get(deck_number, set())
@@ -84,9 +173,11 @@ class TipTracker:
 
     def reset_deck(self, deck_number: int) -> None:
         self._used.pop(deck_number, None)
+        self._save()
 
     def reset_all(self) -> None:
         self._used.clear()
+        self._save()
 
 
 class ErrorLogBuffer(logging.Handler):
@@ -305,11 +396,15 @@ class ServerState:
     """Tracks robot state across tool calls."""
 
     def __init__(self, protocol_dir: Path | None = None):
+        self._storage_dir = Path.home() / ".notable-mcp"
+        self._storage_dir.mkdir(parents=True, exist_ok=True)
+
         self.initialized: bool = False
         self.pipette_config: dict[str, str | None] = {"1": None, "2": None}
         self.deck_config: dict[str, Any] = {str(i): None for i in range(1, 13)}
         self._action_lock = asyncio.Lock()
-        self.tips = TipTracker()
+        self.tips = TipTracker(storage_path=self._storage_dir / "tip_state.json")
+        self.volumes = VolumeTracker()
         # ODTC state
         self.odtc_door_closed: bool = False
         self.odtc_running: bool = False
@@ -317,6 +412,8 @@ class ServerState:
         self._labware_codes: set[str] | None = None
         # Error log buffer
         self.error_log = ErrorLogBuffer()
+        # Config persistence
+        self._config_store = ConfigPersistence(self._storage_dir)
         # Protocol store (file-backed if protocol_dir provided)
         self.protocols = ProtocolStore(storage_dir=protocol_dir)
 
@@ -411,15 +508,25 @@ class ServerState:
         self.initialized = True
         logger.info("Robot initialized")
 
+    def save_config(self) -> None:
+        """Auto-save current config for quick re-setup."""
+        self._config_store.save(self.pipette_config, self.deck_config)
+
+    def load_last_config(self) -> dict | None:
+        """Load last saved config."""
+        return self._config_store.load()
+
     def update_pipette_config(self, config: dict[str, str | None]) -> None:
         for slot, code in config.items():
             self.pipette_config[slot] = code
         logger.info(f"Pipette config updated: {self.pipette_config}")
+        self.save_config()
 
     def update_deck_config(self, config: dict[str, Any]) -> None:
         for slot, value in config.items():
             self.deck_config[slot] = value
         logger.info(f"Deck config updated (slots: {[s for s, v in config.items() if v]})")
+        self.save_config()
 
     def cache_labware_codes(self, labware_library: dict) -> None:
         """Cache all labware codes from the resource library for validation."""
@@ -447,4 +554,5 @@ class ServerState:
         self.odtc_running = False
         self.odtc_door_closed = False  # conservative: treat as unknown/open
         self.tips.reset_all()
+        self.volumes.reset()
         logger.warning("State reset after emergency stop")

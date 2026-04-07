@@ -17,13 +17,39 @@ async def initialize_robot(
     home_axes: bool = True,
     move_to_ready: bool = True,
     modules: list[str] | None = None,
+    use_last_config: bool = False,
 ) -> str:
     """Initialize the robot and optionally connected modules.
+
+    If use_last_config=True, restores last saved pipette/deck config
+    before initialization — skips manual configure_pipette/configure_deck.
 
     After initialization, reads the robot's current pipette and deck
     configuration to sync ServerState with the physical hardware.
     """
     results = {}
+
+    if use_last_config:
+        from ..safety import SafetyError
+        saved = state.load_last_config()
+        if saved is None:
+            raise SafetyError(
+                "No saved configuration found. "
+                "Run configure_pipette and configure_deck first."
+            )
+        if saved.get("pipette_config"):
+            await client.set_pipette_config(saved["pipette_config"])
+            state.update_pipette_config(saved["pipette_config"])
+            results["restored_pipette_config"] = saved["pipette_config"]
+        if saved.get("deck_config"):
+            await client.set_deck_config(saved["deck_config"])
+            state.update_deck_config(saved["deck_config"])
+            results["restored_deck_config"] = {
+                k: v for k, v in saved["deck_config"].items() if v
+            }
+        logger.info(
+            f"Restored last saved config (saved: {saved.get('saved_at', 'unknown')})"
+        )
 
     if modules:
         await client.module_use(modules)

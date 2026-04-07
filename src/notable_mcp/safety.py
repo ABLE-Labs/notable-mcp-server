@@ -31,6 +31,7 @@ MAX_TIPS = 96
 # Operational limits to prevent robot DoS
 MAX_MIX_CYCLES = 100
 MAX_SHAKE_DURATION_SEC = 3600  # 1 hour
+MAX_DELAY_SEC = 3600  # 1 hour
 
 # Flow rate limits (uL/s) — conservative bounds across all pipette types
 MIN_FLOW_RATE = 0.5
@@ -125,6 +126,42 @@ def validate_accel_sec(accel_sec: int) -> None:
         raise SafetyError(
             f"Acceleration time {accel_sec}s out of range ({MIN_ACCEL_SEC}-{MAX_ACCEL_SEC}s)."
         )
+
+
+def parse_well_range(well_spec: str) -> list[str]:
+    """Parse well specification into list of wells.
+
+    Formats:
+    - Single: "A1" -> ["A1"]
+    - Range: "A1:A6" -> ["A1", "A2", ..., "A6"]
+    - Comma-separated: "A1,A2,A3" -> ["A1", "A2", "A3"]
+    """
+    rows = "ABCDEFGH"
+
+    if "," in well_spec:
+        wells = [w.strip() for w in well_spec.split(",")]
+        for w in wells:
+            validate_well(w)
+        return wells
+
+    if ":" in well_spec:
+        parts = well_spec.split(":")
+        if len(parts) != 2:
+            raise SafetyError(f"Invalid well range '{well_spec}'. Use 'A1:A6' format.")
+        start, end = parts[0].strip(), parts[1].strip()
+        validate_well(start)
+        validate_well(end)
+
+        start_idx = rows.index(start[0]) * 12 + int(start[1:]) - 1
+        end_idx = rows.index(end[0]) * 12 + int(end[1:]) - 1
+
+        if start_idx > end_idx:
+            raise SafetyError(f"Invalid well range '{well_spec}': start must be before end.")
+
+        return [f"{rows[i // 12]}{i % 12 + 1}" for i in range(start_idx, end_idx + 1)]
+
+    validate_well(well_spec)
+    return [well_spec]
 
 
 def validate_tip_sequence_length(start_well: str, count: int) -> None:

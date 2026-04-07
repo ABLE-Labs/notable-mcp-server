@@ -19,9 +19,11 @@ PROTOCOL_ALLOWED_TOOLS = frozenset({
     "transfer_liquid",
     "distribute_liquid",
     "mix_liquid",
+    "batch_transfer",
     "run_thermocycler",
     "shake_plate",
     "control_odtc_door",
+    "delay",
 })
 
 

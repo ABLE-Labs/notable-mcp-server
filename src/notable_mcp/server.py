@@ -55,6 +55,7 @@ NOTABLE is a 12-deck-slot liquid handling robot with:
 
 Before ANY liquid handling, you MUST complete these steps IN ORDER:
 
+**Option A — Fresh setup:**
 1. **get_available_resources** — discover valid pipette codes, labware codes, and module options.
 2. **ASK the user** about the physical robot state:
    - Which pipettes are physically mounted? (slot 1 = left, slot 2 = right)
@@ -64,6 +65,11 @@ Before ANY liquid handling, you MUST complete these steps IN ORDER:
 4. **configure_deck** — set ONLY what the user confirmed.
 5. **initialize_robot** — homes axes, syncs physical state, and optionally initializes modules.
 6. Now liquid handling tools are available.
+
+**Option B — Quick re-setup (same config as last session):**
+1. **ASK the user** if the physical robot state is the same as the last session.
+2. **initialize_robot(use_last_config=true)** — restores last saved config and initializes.
+3. Now liquid handling tools are available.
 
 ## CRITICAL SAFETY RULES
 
@@ -77,13 +83,15 @@ Before ANY liquid handling, you MUST complete these steps IN ORDER:
 
 - **transfer_liquid**: Single well-to-well transfer. Picks up tip → aspirate → dispense → drop tip.
 - **distribute_liquid**: One source → multiple destinations. Uses a new tip per destination.
+- **batch_transfer**: Multiple source → destination wells in one call. Supports well ranges (e.g. "A1:A6").
 - **mix_liquid**: Repeated aspirate/dispense in one well. For resuspending or mixing.
 - Always specify **tip_deck** (deck slot where tip rack is placed).
-- Tips are auto-tracked — used tips are skipped automatically.
+- Tips are auto-tracked — used tips are skipped automatically. Tip state persists across sessions.
 - If tips run out, inform the user to replace the tip rack.
 - Use **source_z_reference** / **dest_z_reference** to control pipette depth:
   - "bottom": Inside the liquid (default, for most transfers)
   - "top": Above the well (to avoid contamination)
+- Volume is tracked per well — warnings are raised when aspiration may exceed remaining volume.
 
 ## MODULE GUIDE
 
@@ -111,12 +119,14 @@ Protocols let you save a sequence of liquid handling steps and re-execute them l
 1. **save_protocol**: Define steps as [{tool, arguments}, ...]. Only action tools allowed.
    - **capture_setup=true**: Snapshots current pipette/deck config into the protocol.
    - **setup**: Or provide explicit pipette_config, deck_config, modules.
+   - **delay** steps: Use {"tool": "delay", "arguments": {"seconds": 300}} for wait times (max 3600s).
 2. **list_protocols** / **get_protocol**: Browse saved protocols.
 3. **run_protocol**: Re-execute a saved protocol. Stops on first error.
    - If the protocol has **setup**: auto-configures pipette, deck, and initializes the robot.
    - If no setup: robot must already be configured and initialized.
    - **IMPORTANT**: Always confirm with the user that the physical robot state matches before running.
    - Use **dry_run=true** to validate all steps against the simulator first without touching the real robot.
+   - Use **start_from_step** to resume a failed protocol from a specific step (skips earlier steps).
 4. **get_protocol_run_history**: View recent run results (status, steps completed, duration) for a protocol.
 5. **delete_protocol**: Remove a protocol.
 """
@@ -194,7 +204,9 @@ TOOLS = [
             "Initialize the robot (home axes + ready position) and optionally modules. "
             "MUST be called before any movement or liquid handling commands. "
             "After initialization, returns the synced pipette and deck configuration "
-            "read from the robot's current physical state."
+            "read from the robot's current physical state. "
+            "Use use_last_config=true to restore last saved pipette/deck config — "
+            "skips manual configure_pipette/configure_deck steps."
         ),
         inputSchema={
             "type": "object",
@@ -204,6 +216,14 @@ TOOLS = [
                 "modules": {
                     "type": "array", "items": {"type": "string"},
                     "description": 'Modules to init, e.g. ["odtc", "shaker"].',
+                },
+                "use_last_config": {
+                    "type": "boolean",
+                    "description": (
+                        "Restore last saved pipette/deck config before init. "
+                        "Skips manual configure_pipette/configure_deck. Default: false."
+                    ),
+                    "default": False,
                 },
             },
         },
@@ -295,10 +315,30 @@ TOOLS = [
                 "pipette_number": {"type": "integer", "description": "1 or 2. Default: 1.", "default": 1},
                 "tip_deck": {"type": "integer", "description": "Deck slot of the tip rack."},
                 "tip_well": {"type": "string", "description": 'Starting tip. Default: "A1".', "default": "A1"},
+                "aspirate_flow_rate": {
+                    "type": ["number", "boolean"],
+                    "description": "Flow rate in uL/s, true for max speed, or false to keep current.",
+                    "default": True,
+                },
+                "dispense_flow_rate": {
+                    "type": ["number", "boolean"],
+                    "description": "Flow rate in uL/s, true for max speed, or false to keep current.",
+                    "default": True,
+                },
+                "source_z_reference": {
+                    "type": "string", "enum": ["top", "top_just", "bottom", "bottom_just"],
+                    "description": "Z height at source well. Default: bottom.", "default": "bottom",
+                },
+                "dest_z_reference": {
+                    "type": "string", "enum": ["top", "top_just", "bottom", "bottom_just"],
+                    "description": "Z height at dest well. Default: bottom.", "default": "bottom",
+                },
             },
             "required": [
                 "source_deck", "source_well", "dest_deck", "dest_wells", "volume",
                 "pipette_number", "tip_deck", "tip_well",
+                "aspirate_flow_rate", "dispense_flow_rate",
+                "source_z_reference", "dest_z_reference",
             ],
         },
     ),
@@ -329,6 +369,58 @@ TOOLS = [
                 "deck_number", "well", "volume",
                 "pipette_number", "tip_deck", "tip_well",
                 "cycles", "flow_rate",
+            ],
+        },
+    ),
+    Tool(
+        name="batch_transfer",
+        description=(
+            "Batch transfer: multiple source wells to matching destination wells in one call. "
+            "Wells can be specified as range ('A1:A6'), comma-separated ('A1,A2,A3'), or single ('A1'). "
+            "Source and destination well counts must match (1:1 mapping). "
+            "Each transfer uses a new tip automatically."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "source_deck": {"type": "integer", "description": "Source deck slot (1-12)."},
+                "source_wells": {
+                    "type": "string",
+                    "description": 'Source wells. Range: "A1:A6", comma: "A1,A2,A3", single: "A1".',
+                },
+                "dest_deck": {"type": "integer", "description": "Destination deck slot (1-12)."},
+                "dest_wells": {
+                    "type": "string",
+                    "description": 'Destination wells. Same formats as source_wells.',
+                },
+                "volume": {"type": "number", "description": "Volume per transfer in uL."},
+                "pipette_number": {"type": "integer", "description": "1 (left) or 2 (right).", "default": 1},
+                "tip_deck": {"type": "integer", "description": "Deck slot of the tip rack."},
+                "tip_well": {"type": "string", "description": 'Starting tip.', "default": "A1"},
+                "aspirate_flow_rate": {
+                    "type": ["number", "boolean"],
+                    "description": "Flow rate in uL/s, true for max speed, or false to keep current.",
+                    "default": True,
+                },
+                "dispense_flow_rate": {
+                    "type": ["number", "boolean"],
+                    "description": "Flow rate in uL/s, true for max speed, or false to keep current.",
+                    "default": True,
+                },
+                "source_z_reference": {
+                    "type": "string", "enum": ["top", "top_just", "bottom", "bottom_just"],
+                    "description": "Z height at source wells.", "default": "bottom",
+                },
+                "dest_z_reference": {
+                    "type": "string", "enum": ["top", "top_just", "bottom", "bottom_just"],
+                    "description": "Z height at dest wells.", "default": "bottom",
+                },
+            },
+            "required": [
+                "source_deck", "source_wells", "dest_deck", "dest_wells", "volume",
+                "pipette_number", "tip_deck", "tip_well",
+                "aspirate_flow_rate", "dispense_flow_rate",
+                "source_z_reference", "dest_z_reference",
             ],
         },
     ),
@@ -430,8 +522,8 @@ TOOLS = [
         description=(
             "Save a sequence of liquid handling steps as a named protocol for re-use. "
             "Each step is {tool, arguments}. Only action tools are allowed "
-            "(transfer_liquid, distribute_liquid, mix_liquid, run_thermocycler, "
-            "shake_plate, control_odtc_door). "
+            "(transfer_liquid, distribute_liquid, mix_liquid, batch_transfer, "
+            "run_thermocycler, shake_plate, control_odtc_door, delay). "
             "Use capture_setup=true to snapshot current pipette/deck config into the protocol. "
             "When a protocol has setup, run_protocol will auto-configure the robot before execution."
         ),
@@ -500,7 +592,8 @@ TOOLS = [
             "IMPORTANT: Before running, confirm with the user that the physical "
             "robot state matches the protocol's setup. "
             "Use dry_run=true to validate all steps against the simulator first "
-            "without touching the real robot."
+            "without touching the real robot. "
+            "Use start_from_step to resume a failed protocol from a specific step."
         ),
         inputSchema={
             "type": "object",
@@ -513,6 +606,14 @@ TOOLS = [
                         "without touching the real robot. Default: false."
                     ),
                     "default": False,
+                },
+                "start_from_step": {
+                    "type": "integer",
+                    "description": (
+                        "Start execution from this step (1-based). "
+                        "Earlier steps are skipped. Use to resume after a failure. Default: 1."
+                    ),
+                    "default": 1,
                 },
             },
             "required": ["name"],
@@ -618,6 +719,8 @@ async def _dispatch(client: RobotClient, state: ServerState, name: str, args: di
             return await liquid.distribute_liquid(client, state, **args)
         case "mix_liquid":
             return await liquid.mix_liquid(client, state, **args)
+        case "batch_transfer":
+            return await liquid.batch_transfer(client, state, **args)
         # Modules
         case "run_thermocycler":
             return await modules.run_thermocycler(client, state, **args)
@@ -642,6 +745,8 @@ async def _dispatch(client: RobotClient, state: ServerState, name: str, args: di
             return await protocol.get_protocol(client, state, **args)
         case "delete_protocol":
             return await protocol.delete_protocol(client, state, **args)
+        case "delay":
+            return await _delay(**args)
         case "run_protocol":
             return await _run_protocol(client, state, **args)
         case "get_protocol_run_history":
@@ -663,7 +768,22 @@ async def _reset_tip_tracking(state: ServerState, deck_number: int) -> str:
     )
 
 
-async def _run_protocol(client: RobotClient, state: ServerState, name: str, dry_run: bool = False) -> str:
+async def _delay(seconds: float) -> str:
+    """Wait for a specified duration (for use in protocols)."""
+    from .safety import MAX_DELAY_SEC, SafetyError
+    if seconds <= 0:
+        raise SafetyError("Delay seconds must be positive.")
+    if seconds > MAX_DELAY_SEC:
+        raise SafetyError(f"Delay {seconds}s exceeds maximum ({MAX_DELAY_SEC}s).")
+    logger.info(f"Delay: waiting {seconds}s")
+    await asyncio.sleep(seconds)
+    return json.dumps({"status": "ok", "delayed_seconds": seconds})
+
+
+async def _run_protocol(
+    client: RobotClient, state: ServerState, name: str,
+    dry_run: bool = False, start_from_step: int = 1,
+) -> str:
     """Execute a saved protocol step by step. Stops on first error.
 
     When dry_run=True, execution uses an isolated SimulatedClient + fresh
@@ -742,7 +862,15 @@ async def _run_protocol(client: RobotClient, state: ServerState, name: str, dry_
     steps = proto["steps"]
     results = []
 
+    if start_from_step < 1 or start_from_step > len(steps):
+        raise SafetyError(
+            f"start_from_step must be 1-{len(steps)}, got {start_from_step}."
+        )
+
     for i, step in enumerate(steps, 1):
+        if i < start_from_step:
+            results.append({"step": i, "tool": step["tool"], "status": "skipped"})
+            continue
         tool_name = step["tool"]
         tool_args = step["arguments"]
         try:

@@ -7,8 +7,9 @@ import logging
 
 from ..client import RobotClient
 from ..safety import (
-    MAX_MIX_CYCLES, SafetyError, validate_flow_rate, validate_transfer_params,
-    validate_well, validate_volume, validate_deck_number,
+    MAX_MIX_CYCLES, SafetyError, parse_well_range, validate_flow_rate,
+    validate_transfer_params, validate_well, validate_volume,
+    validate_deck_number,
 )
 from ..state import ServerState
 
@@ -48,6 +49,10 @@ async def _do_single_transfer(
             state.tips.mark_used(tip_deck, tip_well)
 
         # 2. Move to source -> aspirate
+        vol_warning = state.volumes.record_aspirate(source_deck, source_well, volume)
+        if vol_warning:
+            logger.warning(vol_warning)
+
         await client.move_to(
             pipette_number=pipette_number,
             deck_number=source_deck,
@@ -72,6 +77,7 @@ async def _do_single_transfer(
             volume=volume,
             flow_rate=dispense_flow_rate,
         )
+        state.volumes.record_dispense(dest_deck, dest_well, volume)
 
         # 4. Blow out -> move up -> ready plunger
         await client.blow_out(pipette_number=pipette_number)
@@ -102,11 +108,14 @@ async def _do_single_transfer(
                 logger.error(f"Emergency tip drop also failed: {drop_err}")
         raise
 
-    return {
+    result = {
         "source": f"Deck{source_deck}:{source_well}",
         "dest": f"Deck{dest_deck}:{dest_well}",
         "volume": volume,
     }
+    if vol_warning:
+        result["volume_warning"] = vol_warning
+    return result
 
 
 def _validate_action_context(
@@ -194,6 +203,10 @@ async def distribute_liquid(
     pipette_number: int = 1,
     tip_deck: int | None = None,
     tip_well: str = "A1",
+    aspirate_flow_rate: float | bool = True,
+    dispense_flow_rate: float | bool = True,
+    source_z_reference: str = "bottom",
+    dest_z_reference: str = "bottom",
 ) -> str:
     """Distribute liquid from one source to multiple destinations.
 
@@ -216,6 +229,8 @@ async def distribute_liquid(
             volume=volume, pipette_number=pipette_number,
             pipette_code=pipette_code,
         )
+    validate_flow_rate(aspirate_flow_rate)
+    validate_flow_rate(dispense_flow_rate)
 
     # Pre-validate tip availability before starting any transfers
     available = state.tips.available_count(tip_deck, tip_well)
@@ -233,7 +248,6 @@ async def distribute_liquid(
     async with state.robot_action():
         transfers = []
         for dest_well in dest_wells:
-            # Let TipTracker find next available tip each iteration
             next_tip = state.tips.next_available(tip_deck, tip_well)
             result = await _do_single_transfer(
                 client=client, state=state,
@@ -242,6 +256,10 @@ async def distribute_liquid(
                 source_deck=source_deck, source_well=source_well,
                 dest_deck=dest_deck, dest_well=dest_well,
                 volume=volume,
+                aspirate_flow_rate=aspirate_flow_rate,
+                dispense_flow_rate=dispense_flow_rate,
+                source_z_reference=source_z_reference,
+                dest_z_reference=dest_z_reference,
             )
             transfers.append(result)
 
@@ -331,5 +349,91 @@ async def mix_liquid(
 
     return json.dumps(
         {"status": "ok", "well": f"Deck{deck_number}:{well}", "volume": volume, "cycles": cycles},
+        indent=2, ensure_ascii=False,
+    )
+
+
+async def batch_transfer(
+    client: RobotClient,
+    state: ServerState,
+    source_deck: int,
+    source_wells: str,
+    dest_deck: int,
+    dest_wells: str,
+    volume: float,
+    pipette_number: int = 1,
+    tip_deck: int | None = None,
+    tip_well: str = "A1",
+    aspirate_flow_rate: float | bool = True,
+    dispense_flow_rate: float | bool = True,
+    source_z_reference: str = "bottom",
+    dest_z_reference: str = "bottom",
+) -> str:
+    """Batch transfer: multiple source wells to matching destination wells.
+
+    Wells can be specified as:
+    - Range: "A1:A6"
+    - Comma-separated: "A1,A2,A3"
+    - Single: "A1"
+    """
+    if tip_deck is None:
+        raise SafetyError("tip_deck is required.")
+
+    src_wells = parse_well_range(source_wells)
+    dst_wells = parse_well_range(dest_wells)
+
+    if len(src_wells) != len(dst_wells):
+        raise SafetyError(
+            f"Source ({len(src_wells)} wells) and destination ({len(dst_wells)} wells) "
+            "counts must match."
+        )
+
+    validate_well(tip_well)
+    pipette_code = _validate_action_context(
+        state, pipette_number, [source_deck, dest_deck, tip_deck]
+    )
+    for sw, dw in zip(src_wells, dst_wells):
+        validate_transfer_params(
+            source_deck=source_deck, source_well=sw,
+            dest_deck=dest_deck, dest_well=dw,
+            volume=volume, pipette_number=pipette_number,
+            pipette_code=pipette_code,
+        )
+    validate_flow_rate(aspirate_flow_rate)
+    validate_flow_rate(dispense_flow_rate)
+
+    available = state.tips.available_count(tip_deck, tip_well)
+    if available < len(src_wells):
+        raise SafetyError(
+            f"Not enough tips: need {len(src_wells)} but only {available} "
+            f"available on deck {tip_deck} from {tip_well}."
+        )
+
+    logger.info(
+        f"batch_transfer: {len(src_wells)} transfers, "
+        f"Deck{source_deck}({source_wells}) -> Deck{dest_deck}({dest_wells}), "
+        f"{volume}uL each"
+    )
+
+    async with state.robot_action():
+        transfers = []
+        for sw, dw in zip(src_wells, dst_wells):
+            next_tip = state.tips.next_available(tip_deck, tip_well)
+            result = await _do_single_transfer(
+                client=client, state=state,
+                pipette_number=pipette_number,
+                tip_deck=tip_deck, tip_well=next_tip,
+                source_deck=source_deck, source_well=sw,
+                dest_deck=dest_deck, dest_well=dw,
+                volume=volume,
+                aspirate_flow_rate=aspirate_flow_rate,
+                dispense_flow_rate=dispense_flow_rate,
+                source_z_reference=source_z_reference,
+                dest_z_reference=dest_z_reference,
+            )
+            transfers.append(result)
+
+    return json.dumps(
+        {"status": "ok", "transfers": transfers, "count": len(transfers)},
         indent=2, ensure_ascii=False,
     )
