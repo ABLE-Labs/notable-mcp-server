@@ -266,7 +266,12 @@ TOOLS = [
                     "description": "Z height at dest well. Default: bottom.", "default": "bottom",
                 },
             },
-            "required": ["source_deck", "source_well", "dest_deck", "dest_well", "volume", "tip_deck"],
+            "required": [
+                "source_deck", "source_well", "dest_deck", "dest_well", "volume",
+                "pipette_number", "tip_deck", "tip_well",
+                "aspirate_flow_rate", "dispense_flow_rate",
+                "source_z_reference", "dest_z_reference",
+            ],
         },
     ),
     Tool(
@@ -291,7 +296,10 @@ TOOLS = [
                 "tip_deck": {"type": "integer", "description": "Deck slot of the tip rack."},
                 "tip_well": {"type": "string", "description": 'Starting tip. Default: "A1".', "default": "A1"},
             },
-            "required": ["source_deck", "source_well", "dest_deck", "dest_wells", "volume", "tip_deck"],
+            "required": [
+                "source_deck", "source_well", "dest_deck", "dest_wells", "volume",
+                "pipette_number", "tip_deck", "tip_well",
+            ],
         },
     ),
     Tool(
@@ -317,7 +325,11 @@ TOOLS = [
                     "default": True,
                 },
             },
-            "required": ["deck_number", "well", "volume", "tip_deck"],
+            "required": [
+                "deck_number", "well", "volume",
+                "pipette_number", "tip_deck", "tip_well",
+                "cycles", "flow_rate",
+            ],
         },
     ),
     # --- Modules ---
