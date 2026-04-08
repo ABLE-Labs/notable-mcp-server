@@ -78,7 +78,7 @@ async def initialize_robot(
         }
         logger.info(
             f"Config synced from robot — pipettes: {state.pipette_config}, "
-            f"deck slots: {list(results['synced_deck_config'].keys())}"
+            f"decks: {list(results['synced_deck_config'].keys())}"
         )
     except Exception as e:
         logger.warning(f"Failed to sync config from robot: {e}")

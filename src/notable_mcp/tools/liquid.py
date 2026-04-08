@@ -149,7 +149,7 @@ async def transfer_liquid(
 ) -> str:
     """Transfer liquid from one well to another."""
     if tip_deck is None:
-        raise SafetyError("tip_deck is required. Specify the deck slot where the tip rack is located.")
+        raise SafetyError("tip_deck is required. Specify the deck number where the tip rack is located.")
 
     validate_well(tip_well)
     pipette_code = _validate_action_context(

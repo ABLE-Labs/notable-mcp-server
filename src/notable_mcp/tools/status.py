@@ -20,7 +20,7 @@ async def get_robot_status(client: RobotClient, state: ServerState) -> str:
         "server_state": {
             "initialized": state.initialized,
             "pipette_config": state.pipette_config,
-            "deck_configured_slots": [
+            "deck_configured": [
                 int(s) for s, v in state.deck_config.items() if v
             ],
             "odtc_door_closed": state.odtc_door_closed,

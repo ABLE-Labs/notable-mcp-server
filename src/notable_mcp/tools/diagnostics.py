@@ -39,9 +39,9 @@ async def diagnose_error(client: RobotClient, state: ServerState) -> str:
         issues.append("No pipette configured. Call configure_pipette.")
 
     # 4. Deck config
-    configured_slots = [s for s, v in state.deck_config.items() if v]
-    checks["deck_configured_slots"] = configured_slots
-    if not configured_slots:
+    configured_decks = [s for s, v in state.deck_config.items() if v]
+    checks["deck_configured"] = configured_decks
+    if not configured_decks:
         issues.append("No deck configured. Call configure_deck.")
 
     # 5. Tip availability

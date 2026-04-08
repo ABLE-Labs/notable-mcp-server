@@ -18,7 +18,7 @@ PIPETTE_VOLUME_RANGE: dict[str, tuple[float, float]] = {
     "8ch_20ul": (0.5, 20),
 }
 
-# Deck slot count (4 rows x 3 columns)
+# Deck count (4 rows x 3 columns)
 DECK_MIN = 1
 DECK_MAX = 12
 

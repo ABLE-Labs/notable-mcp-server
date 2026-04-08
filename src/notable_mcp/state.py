@@ -94,7 +94,7 @@ class VolumeTracker:
 
 
 class TipTracker:
-    """Tracks tip usage per deck slot across calls with optional file persistence."""
+    """Tracks tip usage per deck across calls with optional file persistence."""
 
     def __init__(self, storage_path: Path | None = None):
         self._used: dict[int, set[str]] = {}
@@ -451,7 +451,7 @@ class ServerState:
         code = self.get_pipette_code(pipette_number)
         if not code:
             raise SafetyError(
-                f"No pipette mounted on slot {pipette_number} "
+                f"No pipette mounted on mount {pipette_number} "
                 f"({'left' if pipette_number == 1 else 'right'}). "
                 "Call configure_pipette first."
             )
@@ -460,8 +460,8 @@ class ServerState:
         config = self.deck_config.get(str(deck_number))
         if not config:
             raise SafetyError(
-                f"Deck slot {deck_number} is empty (no labware assigned). "
-                "Call configure_deck first to assign labware to this slot."
+                f"Deck {deck_number} is empty (no labware assigned). "
+                "Call configure_deck first to assign labware to this deck."
             )
 
     def require_odtc_door_closed(self) -> None:
@@ -525,7 +525,7 @@ class ServerState:
     def update_deck_config(self, config: dict[str, Any]) -> None:
         for slot, value in config.items():
             self.deck_config[slot] = value
-        logger.info(f"Deck config updated (slots: {[s for s, v in config.items() if v]})")
+        logger.info(f"Deck config updated (decks: {[s for s, v in config.items() if v]})")
         self.save_config()
 
     def cache_labware_codes(self, labware_library: dict) -> None:

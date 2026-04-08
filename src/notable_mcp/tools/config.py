@@ -16,7 +16,7 @@ async def configure_pipette(client: RobotClient, state: ServerState, pipette_con
     """Configure which pipettes are mounted on the robot."""
     for slot, code in pipette_config.items():
         if slot not in ("1", "2"):
-            raise SafetyError(f"Pipette slot must be '1' (left) or '2' (right), got '{slot}'.")
+            raise SafetyError(f"Pipette mount must be '1' (left) or '2' (right), got '{slot}'.")
         if code:
             validate_pipette_code(code)
 
@@ -31,12 +31,12 @@ async def configure_deck(client: RobotClient, state: ServerState, deck_config: d
         try:
             validate_deck_number(int(slot_str))
         except ValueError:
-            raise SafetyError(f"Deck slot must be a number 1-12, got '{slot_str}'.")
+            raise SafetyError(f"Deck must be a number 1-12, got '{slot_str}'.")
 
         # Type check: only str, dict, or None allowed
         if value is not None and not isinstance(value, (str, dict)):
             raise SafetyError(
-                f"Deck slot {slot_str} value must be a labware code (string), "
+                f"Deck {slot_str} value must be a labware code (string), "
                 f"module config (object), or null — got {type(value).__name__}."
             )
 
@@ -50,7 +50,7 @@ async def configure_deck(client: RobotClient, state: ServerState, deck_config: d
 
         if labware_code and not state.is_labware_code_valid(labware_code):
             raise SafetyError(
-                f"Unknown labware code '{labware_code}' for deck slot {slot_str}. "
+                f"Unknown labware code '{labware_code}' for deck {slot_str}. "
                 "Call get_available_resources first to see valid codes."
             )
 

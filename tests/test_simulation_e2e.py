@@ -14,7 +14,7 @@ import tempfile
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-EXPECTED_TOOL_COUNT = 23
+EXPECTED_TOOL_COUNT = 24
 
 
 async def call(session: ClientSession, tool_name: str, args: dict = None) -> dict:
@@ -114,9 +114,9 @@ async def main():
             print("\n[9] Checking robot status...")
             result = await call(session, "get_robot_status")
             assert result["server_state"]["initialized"] is True
-            assert 1 in result["server_state"]["deck_configured_slots"]
+            assert 1 in result["server_state"]["deck_configured"]
             print(f"    Initialized: {result['server_state']['initialized']}")
-            print(f"    Deck slots: {result['server_state']['deck_configured_slots']}")
+            print(f"    Deck configured: {result['server_state']['deck_configured']}")
 
             # 10. GUARD: transfer to unconfigured deck
             print("\n[10] Guard: transfer to unconfigured deck 6...")
@@ -126,7 +126,7 @@ async def main():
                 "volume": 500, "tip_deck": 4,
             })
             assert "error" in result
-            assert "empty" in result["error"].lower() or "slot 6" in result["error"].lower()
+            assert "empty" in result["error"].lower() or "deck 6" in result["error"].lower()
             print(f"    Blocked: {result['error'][:60]}...")
 
             # 11. GUARD: volume exceeds pipette range (20uL pipette, 500uL request)
@@ -397,7 +397,7 @@ async def main():
             assert "1" in result["setup"]["pipette_config"]
             assert "1" in result["setup"]["deck_config"]
             print(f"    Pipettes: {result['setup']['pipette_config']}")
-            print(f"    Deck slots: {list(result['setup']['deck_config'].keys())}")
+            print(f"    Decks: {list(result['setup']['deck_config'].keys())}")
 
             # 37. Emergency stop (resets state)
             print("\n[37] Emergency stop...")

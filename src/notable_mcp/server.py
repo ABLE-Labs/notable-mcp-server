@@ -44,10 +44,10 @@ Incorrect configuration can cause physical damage. Follow this workflow strictly
 
 ## ABOUT THE NOTABLE ROBOT
 
-NOTABLE is a 12-deck-slot liquid handling robot with:
-- **2 pipette slots**: Slot 1 (left) and Slot 2 (right)
+NOTABLE is a 12-deck liquid handling robot with:
+- **2 pipette mounts**: Mount 1 (left) and Mount 2 (right)
 - **Pipette types**: 1-channel (1ch) and 8-channel (8ch), in 20uL / 200uL / 1000uL volumes
-- **Deck**: 12 slots (4 rows x 3 columns) for tip racks, well plates, reservoirs, trash, and modules
+- **Deck**: 12 positions (4 rows x 3 columns) for tip racks, well plates, reservoirs, trash, and modules
 - **Modules**: ODTC (On-Deck Thermocycler), Orbital Shaker, and others
 - **Well format**: Standard 96-well (A1-H12, rows A-H, columns 1-12)
 
@@ -58,8 +58,8 @@ Before ANY liquid handling, you MUST complete these steps IN ORDER:
 **Option A — Fresh setup:**
 1. **get_available_resources** — discover valid pipette codes, labware codes, and module options.
 2. **ASK the user** about the physical robot state:
-   - Which pipettes are physically mounted? (slot 1 = left, slot 2 = right)
-   - What labware is on each deck slot? (plates, tip racks, reservoirs, trash)
+   - Which pipettes are physically mounted? (mount 1 = left, mount 2 = right)
+   - What labware is on each deck? (plates, tip racks, reservoirs, trash)
    - Where are the tip racks and how many tips are available?
 3. **configure_pipette** — set ONLY what the user confirmed.
 4. **configure_deck** — set ONLY what the user confirmed.
@@ -75,7 +75,7 @@ Before ANY liquid handling, you MUST complete these steps IN ORDER:
 
 - NEVER guess or assume the physical configuration.
 - NEVER call configure_pipette or configure_deck without explicit user confirmation.
-- NEVER invent deck slot numbers, tip rack locations, or pipette types.
+- NEVER invent deck numbers, tip rack locations, or pipette types.
 - If you are unsure about ANY physical state, ASK the user before proceeding.
 - Wrong configuration → robot moves to wrong position → collision → hardware damage.
 
@@ -85,7 +85,7 @@ Before ANY liquid handling, you MUST complete these steps IN ORDER:
 - **distribute_liquid**: One source → multiple destinations. Uses a new tip per destination.
 - **batch_transfer**: Multiple source → destination wells in one call. Supports well ranges (e.g. "A1:A6").
 - **mix_liquid**: Repeated aspirate/dispense in one well. For resuspending or mixing.
-- Always specify **tip_deck** (deck slot where tip rack is placed).
+- Always specify **tip_deck** (deck number where tip rack is placed).
 - Tips are auto-tracked — used tips are skipped automatically. Tip state persists across sessions.
 - If tips run out, inform the user to replace the tip rack.
 - Use **source_z_reference** / **dest_z_reference** to control pipette depth:
@@ -157,7 +157,7 @@ TOOLS = [
     Tool(
         name="configure_pipette",
         description=(
-            'Configure which pipettes are mounted. Slot "1" = left, "2" = right. '
+            'Configure which pipettes are mounted. Mount "1" = left, "2" = right. '
             'Example: {"1": "1ch_1000ul", "2": "8ch_20ul"}. '
             "Call get_available_resources first to see valid pipette codes. "
             "CRITICAL: Configuration MUST match the physically mounted pipettes. "
@@ -168,7 +168,7 @@ TOOLS = [
             "properties": {
                 "pipette_config": {
                     "type": "object",
-                    "description": 'Slot ("1" or "2") to pipette code.',
+                    "description": 'Mount ("1" or "2") to pipette code.',
                     "additionalProperties": {"type": "string"},
                 },
             },
@@ -178,12 +178,12 @@ TOOLS = [
     Tool(
         name="configure_deck",
         description=(
-            "Configure the deck layout (slots 1-12). "
+            "Configure the deck layout (deck 1-12). "
             'Simple: {"1": "spl_96_well_plate_30096"}. '
             'Module: {"7": {"module": "odtc", "labware": "spl_96_well_plate_30096"}}. '
             "Call get_available_resources first to see valid codes. "
             "CRITICAL: Configuration MUST match the physical labware placement on the robot. "
-            "NEVER guess — always ask the user to confirm the deck layout (what labware is in which slot, "
+            "NEVER guess — always ask the user to confirm the deck layout (what labware is on which deck, "
             "where tip racks are placed) before calling this."
         ),
         inputSchema={
@@ -191,7 +191,7 @@ TOOLS = [
             "properties": {
                 "deck_config": {
                     "type": "object",
-                    "description": "Deck slot number (string) to labware code or module config.",
+                    "description": "Deck number (string) to labware code or module config.",
                 },
             },
             "required": ["deck_config"],
@@ -253,19 +253,19 @@ TOOLS = [
             "Transfer liquid from one well to another. Automatically handles: "
             "pick up tip -> aspirate -> dispense -> drop tip. "
             "Requires: configure_pipette, configure_deck, initialize_robot called first. "
-            "All parameters (deck slots, tip_deck, pipette_number) must correspond to "
+            "All parameters (deck numbers, tip_deck, pipette_number) must correspond to "
             "the confirmed physical setup — do not invent values."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "source_deck": {"type": "integer", "description": "Source deck slot (1-12)."},
+                "source_deck": {"type": "integer", "description": "Source deck (1-12)."},
                 "source_well": {"type": "string", "description": 'Source well (e.g. "A1").'},
-                "dest_deck": {"type": "integer", "description": "Destination deck slot (1-12)."},
+                "dest_deck": {"type": "integer", "description": "Destination deck (1-12)."},
                 "dest_well": {"type": "string", "description": 'Destination well (e.g. "B3").'},
                 "volume": {"type": "number", "description": "Volume in uL."},
                 "pipette_number": {"type": "integer", "description": "1 (left) or 2 (right). Default: 1.", "default": 1},
-                "tip_deck": {"type": "integer", "description": "Deck slot of the tip rack."},
+                "tip_deck": {"type": "integer", "description": "Deck of the tip rack."},
                 "tip_well": {"type": "string", "description": 'Tip to pick up. Default: "A1".', "default": "A1"},
                 "aspirate_flow_rate": {
                     "type": ["number", "boolean"],
@@ -304,16 +304,16 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "source_deck": {"type": "integer", "description": "Source deck slot (1-12)."},
+                "source_deck": {"type": "integer", "description": "Source deck (1-12)."},
                 "source_well": {"type": "string", "description": 'Source well (e.g. "A1").'},
-                "dest_deck": {"type": "integer", "description": "Destination deck slot (1-12)."},
+                "dest_deck": {"type": "integer", "description": "Destination deck (1-12)."},
                 "dest_wells": {
                     "type": "array", "items": {"type": "string"},
                     "description": 'Destination wells (e.g. ["A1", "A2", "A3"]).',
                 },
                 "volume": {"type": "number", "description": "Volume per destination in uL."},
                 "pipette_number": {"type": "integer", "description": "1 or 2. Default: 1.", "default": 1},
-                "tip_deck": {"type": "integer", "description": "Deck slot of the tip rack."},
+                "tip_deck": {"type": "integer", "description": "Deck of the tip rack."},
                 "tip_well": {"type": "string", "description": 'Starting tip. Default: "A1".', "default": "A1"},
                 "aspirate_flow_rate": {
                     "type": ["number", "boolean"],
@@ -352,12 +352,12 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "deck_number": {"type": "integer", "description": "Deck slot (1-12)."},
+                "deck_number": {"type": "integer", "description": "Deck (1-12)."},
                 "well": {"type": "string", "description": 'Well to mix (e.g. "A1").'},
                 "volume": {"type": "number", "description": "Mix volume in uL."},
                 "cycles": {"type": "integer", "description": "Number of mix cycles. Default: 3.", "default": 3},
                 "pipette_number": {"type": "integer", "description": "1 or 2. Default: 1.", "default": 1},
-                "tip_deck": {"type": "integer", "description": "Deck slot of the tip rack."},
+                "tip_deck": {"type": "integer", "description": "Deck of the tip rack."},
                 "tip_well": {"type": "string", "description": 'Tip to use. Default: "A1".', "default": "A1"},
                 "flow_rate": {
                     "type": ["number", "boolean"],
@@ -383,19 +383,19 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "source_deck": {"type": "integer", "description": "Source deck slot (1-12)."},
+                "source_deck": {"type": "integer", "description": "Source deck (1-12)."},
                 "source_wells": {
                     "type": "string",
                     "description": 'Source wells. Range: "A1:A6", comma: "A1,A2,A3", single: "A1".',
                 },
-                "dest_deck": {"type": "integer", "description": "Destination deck slot (1-12)."},
+                "dest_deck": {"type": "integer", "description": "Destination deck (1-12)."},
                 "dest_wells": {
                     "type": "string",
                     "description": 'Destination wells. Same formats as source_wells.',
                 },
                 "volume": {"type": "number", "description": "Volume per transfer in uL."},
                 "pipette_number": {"type": "integer", "description": "1 (left) or 2 (right).", "default": 1},
-                "tip_deck": {"type": "integer", "description": "Deck slot of the tip rack."},
+                "tip_deck": {"type": "integer", "description": "Deck of the tip rack."},
                 "tip_well": {"type": "string", "description": 'Starting tip.', "default": "A1"},
                 "aspirate_flow_rate": {
                     "type": ["number", "boolean"],
@@ -468,7 +468,7 @@ TOOLS = [
     Tool(
         name="reset_tip_tracking",
         description=(
-            "Reset tip tracking for a specific deck slot after physically replacing "
+            "Reset tip tracking for a specific deck after physically replacing "
             "a tip rack. Without this, the server thinks those tips are still used. "
             "Call this when the user confirms a fresh tip rack has been placed."
         ),
@@ -477,7 +477,7 @@ TOOLS = [
             "properties": {
                 "deck_number": {
                     "type": "integer",
-                    "description": "Deck slot (1-12) where tip rack was replaced.",
+                    "description": "Deck (1-12) where tip rack was replaced.",
                 },
             },
             "required": ["deck_number"],
@@ -756,7 +756,7 @@ async def _dispatch(client: RobotClient, state: ServerState, name: str, args: di
 
 
 async def _reset_tip_tracking(state: ServerState, deck_number: int) -> str:
-    """Reset tip tracking for a deck slot after tip rack replacement."""
+    """Reset tip tracking for a deck after tip rack replacement."""
     from .safety import validate_deck_number
     validate_deck_number(deck_number)
     previous_used = state.tips.used_count(deck_number)
